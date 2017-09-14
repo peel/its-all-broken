@@ -1,0 +1,246 @@
+* nix-repl
+#+BEGIN_SRC nix
+  (true && false)
+  (7/4) # division
+  7/4 # path literal
+  builtins.length [1 2 3 "x"]
+  [1 2 3] ++ [4 5]
+  builtins.head [1 2 3 4]
+  builtins.tail [1 2 3 4]
+  {foo = [1 2]; bar = "x";}
+  let a = 1; in { a = 2; b = a; }.b
+  with { a = 1; b = 2; }; a + b
+  ({x,y}: x + "-" + y) { x = "a"; y = "b";}
+#+END_SRC
+* Simple package
+#+BEGIN_SRC nix
+  {bash, writeScript}:
+  writeScript "hello-2020" ''
+    #!${bash}/bin/bash
+    echo "Hello 2020!"
+  '';
+#+END_SRC
+#+BEGIN_SRC bash
+nix-build -E '(import <nixpkgs> {}).callPackage ./default.nix {}'
+nix-build -E '(import <nixpkgs> {}).callPackage ./default.nix {}'
+ls 
+realpath result
+nix-shell -p coreutils
+#+END_SRC
+* Haskell package
+#+BEGIN_SRC bash
+nix-shell -p stack -p cabal2nix
+stack new hello2020
+cd hello2020
+nix-build -E 'with import <nixpkgs> {}; haskellPackages.callPackage ./default.nix {}'
+ls
+./result/bin/sample-exe
+#+END_SRC
+* Store
+#+BEGIN_SRC bash
+nix-store --query --tree $(which git)
+nix-store --query --graph $(which git) | dot -Tpng > graph.png && open graph.png
+#+END_SRC
+* Shell
+** nix-shell
+#+BEGIN_SRC bash
+  nix-shell -p hello
+  nix-shell -p hello --run "which hello"
+  nix-shell -p git <<'HEREDOC'
+          git status
+  HEREDOC
+#+END_SRC
+** scripting
+#+BEGIN_SRC bash
+#!/usr/bin/env nix-shell
+#!nix-shell -i python3 -p nodejs
+....
+#+END_SRC
+** environment
+#+BEGIN_SRC nix
+  with import <nixpkgs> {};
+  stdenv.mkDerivation {
+    name = "env";
+    buildInputs = [
+      redis
+      (python.buildEnv.override {
+        extraLibs = [pythonPackages.redis];
+      });
+    ];
+    shellHook = ''
+      export PYTHONPATH=`pwd`
+    '';
+  }
+#+END_SRC
+#+BEGIN_SRC bash
+cd pyenv
+nix-build  -o result
+#+END_SRC
+see [[~/.nixpkgs/config.nix]config.nix]]
+#+BEGIN_SRC bash
+
+#+END_SRC
+~/D/D/notes/its-all-broken:no-branch*? λ 
+
+* Configuration.nix
+#+BEGIN_SRC bash
+ssh peel@the-2020-machine.local
+cat /etc/nixos/configuration.nix
+#+END_SRC
+* Queue config
+Add extra rabbit to a machine:
+#+BEGIN_SRC bash
+vim /etc/nixos/configuration.nix
+#+END_SRC
+#+BEGIN_SRC nix
+  services.rabbitmq = {
+    enable = true;
+  };
+#+END_SRC
+#+BEGIN_SRC bash
+nixos-rebuild switch
+#+END_SRC
+* NixOps
+** Virtualbox
+*** Logical machine spec
+#+BEGIN_SRC nix
+{
+  network.description = "web server";
+
+  webserver =
+  { config, pkgs, ... }:
+  {
+    services.httpd.enable = true;
+    services.httpd.adminAddr = "jane@doe.com";
+    services.httpd.documentRoot = "${pkgs.valgrind}/share/doc/valgrind/html";
+    networking.firewall.allowedTCPPorts = [ 80 ];
+  };
+}
+#+END_SRC
+*** Physical machine spec
+#+BEGIN_SRC bash
+  {
+    webserver = 
+    { config, pkgs, ... }:
+    { deployment.targetEnv = "virtualbox";
+      deployment.virtualbox.memorySize = 1024;
+      deployment.virtualbox.vcpu = 2;
+      deployment.virtualbox.headless = true;
+    };
+  }
+#+END_SRC
+*** Running
+#+BEGIN_SRC bash
+  #create
+  nixops create ./logical.nix ./physical.nix -d nix-vbox
+  # list deployments
+  nixops list
+  # deployments state
+  nixops info -d nix-vbox
+  # deploy machine
+  nixops deploy -d nix-vbox
+  # deployment state after deployment
+  nixops info -d nix-vbox
+  # ssh into machine
+  nixops ssh -d nix-vbox webserver
+  # make a change to logical.nix or physical.nix
+  vim -t *.nix
+  # redeploy machine
+  nixops deploy -d nix-vbox
+  # check machine status
+  nixops check -d nix-vbox
+  # fix failed deployments
+  nixops deploy --check
+  # destroy machine
+  nixops destroy -d nix-vbox --confirm
+#+END_SRC
+** Multiple Vboxes
+*** Logical machines
+   Important: remote config hostname == logical name (as with docker-compose)
+   2x backend + load balancer:
+#+BEGIN_SRC nix
+  let 
+    backend =
+      { config, pkgs, ...}:
+      { services.httpd.enable = true;
+        services.httpd.adminAddr = "jane@doe.com";
+        services.httpd.documentRoot = "${pkgs.valgrind.doc}/share/doc/valgrind/html";
+        networking.firewall.allowedTCPPorts = [ 80 ];
+      };
+  in
+  {
+    network.description = "Load balanced network";
+    proxy = 
+      { config, pkgs, nodes, ...}:
+      { services.httpd.enable = true;
+        services.httpd.adminAddr = "iCanTellYouAboutPain@doe.org";
+        services.httpd.extraModules = [ "proxy_balancer" "lbmethod_byrequests" ];
+        services.httpd.extraConfig = ''
+          <Proxy balancer://cluster>
+            Allow from all
+            BalancerMember http://backend1 retry=0
+            BalancerMember http://backend2 retry=0
+          </Proxy>
+          ProxyPass         /    balancer://cluster/
+          ProxyPassReverse  /    balancer://cluster/
+        '';
+        networking.firewall.allowedTCPPorts = [ 80 ];
+      };
+    backend1 = backend;
+    backend2 = backend;
+  }
+#+END_SRC
+*** Physical machines
+#+BEGIN_SRC nix
+let 
+  vbox = {deployment.targetEnv = "virtualbox";
+in 
+{ proxy = vbox;
+  backend1 = vbox;
+  backend2 = vbox;
+}
+#+END_SRC
+*** Running
+#+BEGIN_SRC bash
+nixops create ./logical.nix ./physical.nix -d networked-vbox
+nixops deploy -d networked-vbox
+#+END_SRC
+** Raspberry Pi running NixOS
+*** Physical machine spec
+*Important:* no +~deployment.targetEnv~+ - use ~deployment.targetHost~ w/ hostname or IP
+ #+BEGIN_SRC nix
+   {
+     fileserver =
+     { deployment.targetHost = "192.168.43.145";
+       services.nfs.server.enable = true;
+       services.nfs.server.exports = "/home/peel/2020";
+     };
+   }
+ #+END_SRC
+*** Running
+#+BEGIN_SRC 
+nixops create ./logical.nix ./physical.nix nix-rpi
+nixops deploy -d nix-rpi
+nixops destroy -d nix-rpi
+#+END_SRC
+** Digital Ocean
+*** Physical machines spec
+Important: uses [[https://github.com/elitak/nixos-infect][nixos-infect]].
+#+BEGIN_SRC nix
+{
+  resources.sshKeyPairs.ssh-key = {};
+  machine =
+    { config, pkgs, ...}:
+    { services.nginx.enable = true;
+      services.openssh.enable = true;
+      deployment.targetEnv = "digitalOcean";
+      deployment.digialOcean.enableIpv6 = true;
+      deployment.digialOcean.region = "ams2";
+      deployment.digialOcean.size = "512mb";
+      #set DIGITAL_OCEAN_AUTH_TOKEN env or:
+      #deployment.digitalOcean.authToken = "";
+    };
+}
+#+END_SRC
+* Disnix
+Moved to a separate repo...
