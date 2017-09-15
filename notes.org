@@ -104,18 +104,21 @@ nixos-rebuild switch
 ** Virtualbox
 *** Logical machine spec
 #+BEGIN_SRC nix
-{
-  network.description = "web server";
-
-  webserver =
-  { config, pkgs, ... }:
   {
-    services.httpd.enable = true;
-    services.httpd.adminAddr = "jane@doe.com";
-    services.httpd.documentRoot = "${pkgs.valgrind}/share/doc/valgrind/html";
-    networking.firewall.allowedTCPPorts = [ 80 ];
-  };
-}
+    network.description = "web server";
+
+    webserver =
+    { config, pkgs, ... }:
+    {
+      services.httpd.enable = true;
+      services.httpd.adminAddr = "jane@doe.com";
+      builtins.toFile "${src}/webroot/index.html" ''
+       <h1>Hello ChamberConf!</h1>
+      '';
+      services.httpd.documentRoot = "${src}/";
+      networking.firewall.allowedTCPPorts = [ 80 ];
+    };
+  }
 #+END_SRC
 *** Physical machine spec
 #+BEGIN_SRC bash
@@ -130,6 +133,11 @@ nixos-rebuild switch
   }
 #+END_SRC
 *** Running
+On a linux machine you can use those directly. On a macOS you will need a builder capable of building linux packages.
+See: https://github.com/LnL7/nix-docker#building-an-image which you can automate with a provided script:
+#+BEGIN_SRC bash
+source <(curl -fsSL https://raw.githubusercontent.com/LnL7/nix-docker/master/start-docker-nix-build-slave)
+#+END_SRC
 #+BEGIN_SRC bash
   #create
   nixops create ./logical.nix ./physical.nix -d nix-vbox
